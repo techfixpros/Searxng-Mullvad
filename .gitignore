@@ -2,6 +2,9 @@
 mullvad.conf
 history.db
 country-index
+active-mullvad.env
+docker-compose.yml
+core-config/
 *.log
 
 # Editor/OS junk

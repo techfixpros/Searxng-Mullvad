@@ -50,6 +50,45 @@ To install somewhere else instead:
 ./install.sh --prefix=$HOME/.local/bin
 ```
 
+## Example stack
+
+If you don't already have a gluetun + Mullvad stack running, this repo
+includes a working example to start from:
+[`docker-compose.yml.example`](./docker-compose.yml.example) and
+[`active-mullvad.env.example`](./active-mullvad.env.example).
+
+```bash
+cp docker-compose.yml.example docker-compose.yml
+cp active-mullvad.env.example active-mullvad.env
+```
+
+Edit `active-mullvad.env` with your own Mullvad WireGuard credentials:
+
+1. Mullvad account page -> **WireGuard configuration** -> Generate key
+2. Copy `PrivateKey` into `WIREGUARD_PRIVATE_KEY`
+3. Copy `Address` into `WIREGUARD_ADDRESSES` (keep the `/32`)
+4. Set `SERVER_COUNTRIES` to any country Mullvad has servers in
+
+Both files are gitignored once copied, so your real key never
+accidentally gets committed.
+
+Also worth a look before bringing it up: `docker-compose.yml`'s
+`FIREWALL_OUTBOUND_SUBNETS` and `SEARXNG_BASE_URL` both have
+`CHANGE ME` comments next to placeholder values -- adjust those to
+match your own Docker network and (if you have one) public domain.
+
+Then bring it up:
+
+```bash
+docker compose up -d
+```
+
+This is a three-container stack -- `gluetun` (the Mullvad tunnel),
+`searxng` (sharing gluetun's network), and `valkey` (SearXNG's cache)
+-- but the toolkit itself only cares about the `gluetun` container and,
+optionally, one paired app container. Swap `searxng`/`valkey` for
+whatever you're actually running behind gluetun if it's not SearXNG.
+
 ## Configure
 
 Run `mullvad-status` once with no arguments. It auto-creates a config
@@ -61,8 +100,12 @@ file at:
 
 Open it and edit every value to match your own setup -- an example is
 included in this repo at [`mullvad.conf.example`](./mullvad.conf.example)
-if you want to look before running anything. At minimum you'll need to
-set:
+if you want to look before running anything. If you used the example
+stack above as-is, the defaults in `mullvad.conf` already match it
+except for `COMPOSE_DIR`, which you'll need to point at wherever you
+put `docker-compose.yml`.
+
+At minimum you'll need to set:
 
 | Setting | What it is |
 |---|---|

@@ -1,0 +1,86 @@
+name: searxng
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: searxng-gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    env_file:
+      - active-mullvad.env
+    environment:
+      - VPN_SERVICE_PROVIDER=mullvad
+      - VPN_TYPE=wireguard
+      # CHANGE ME: set this to your own Docker network's subnet
+      # (e.g. `docker network inspect <network>` to find it), or remove
+      # this line entirely if you don't need outbound firewall rules.
+      - FIREWALL_OUTBOUND_SUBNETS=172.20.0.0/16
+      - FIREWALL_INPUT_PORTS=8080
+      - HEALTH_TARGET_ADDRESS=am.i.mullvad.net:443
+      - HEALTH_VPN_DURATION_INITIAL=30s
+      - HEALTH_VPN_DURATION_ADDITION=5s
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "https://am.i.mullvad.net/connected"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - searxng_default
+
+  searxng:
+    image: searxng/searxng
+    container_name: searxng
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    environment:
+      # CHANGE ME: set this to your own public URL (or remove this line
+      # and searxng will fall back to auto-detecting it from request
+      # headers, which is fine for most setups).
+      - SEARXNG_BASE_URL=https://searxng.example.com/
+    volumes:
+      - ./core-config:/etc/searxng
+      - core-data:/var/cache/searxng/
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  valkey:
+    image: valkey/valkey
+    container_name: searxng-valkey
+    command: >
+      valkey-server
+      --save 30 1
+      --loglevel warning
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    networks:
+      - searxng_default
+    volumes:
+      - valkey-data:/data/
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+networks:
+  searxng_default:
+    driver: bridge
+
+volumes:
+  core-data:
+  valkey-data:
