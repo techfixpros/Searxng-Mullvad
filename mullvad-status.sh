@@ -365,6 +365,23 @@ human_bytes() {
     }'
 }
 
+# Converts accented/non-ASCII characters (e.g. from city/country names
+# like "Malmoe" or "Vaestra Goetaland") to plain ASCII, so fixed-width
+# table columns line up regardless of the host's locale -- printf's
+# byte-vs-display-width counting for multi-byte UTF-8 characters isn't
+# reliable unless the shell locale happens to be UTF-8-aware, which we
+# can't assume. Falls back to the original string if iconv is missing
+# or fails, rather than erroring out.
+transliterate() {
+    local input="$1" out
+    out=$(printf '%s' "$input" | LC_ALL=C.UTF-8 iconv -f utf8 -t ascii//TRANSLIT 2>/dev/null)
+    if [[ -n "$out" ]]; then
+        printf '%s' "$out"
+    else
+        printf '%s' "$input"
+    fi
+}
+
 border() {
     local char="$1"
     printf "%s+" "$CYAN"
@@ -412,6 +429,8 @@ do_check() {
         IP=$(echo "$JSON" | grep -o '"ip":"[^"]*"' | cut -d'"' -f4)
         CITY=$(echo "$JSON" | grep -o '"city":"[^"]*"' | cut -d'"' -f4)
         COUNTRY=$(echo "$JSON" | grep -o '"country":"[^"]*"' | cut -d'"' -f4)
+        CITY=$(transliterate "$CITY")
+        COUNTRY=$(transliterate "$COUNTRY")
         HOSTNAME=$(echo "$JSON" | grep -o '"mullvad_exit_ip_hostname":"[^"]*"' | cut -d'"' -f4)
 
         if [[ "$MULLVAD_EXIT" == "true" && -n "$HOSTNAME" ]]; then
@@ -480,6 +499,7 @@ render() {
         any=1
         local hh
         hh=$(date -d "$ts" +%H:%M:%S 2>/dev/null || echo "$ts")
+        loc=$(transliterate "$loc")
         local marker="  " color=""
         if [[ "$server" == "${HOSTNAME:-__none__}" ]]; then
             marker="> "
@@ -496,6 +516,7 @@ render() {
 
     if [[ -n "${LOG_LINE:-}" ]]; then
         CLEAN_LOG=$(echo "$LOG_LINE" | sed -E 's/^.*msg="//; s/"$//')
+        CLEAN_LOG=$(transliterate "$CLEAN_LOG")
         content_line " Last log:" "$DIM"
         echo "$CLEAN_LOG" | fold -s -w $((INNER_WIDTH - 1)) | while IFS= read -r line; do
             content_line " ${line}" "$DIM"
