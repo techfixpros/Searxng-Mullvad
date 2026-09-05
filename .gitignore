@@ -11,3 +11,6 @@ core-config/
 .DS_Store
 *.swp
 *~
+
+# zsh completion cache, if compiled in place
+*.zwc

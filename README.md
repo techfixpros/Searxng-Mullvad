@@ -50,6 +50,34 @@ To install somewhere else instead:
 ./install.sh --prefix=$HOME/.local/bin
 ```
 
+## Shell completion (zsh)
+
+Tab completion for both commands is included, tested with
+[Oh My Zsh](https://ohmyz.sh/):
+
+```bash
+mkdir -p ~/.oh-my-zsh/custom/completions
+cp completions/_mullvad-status completions/_mullvad-discovery ~/.oh-my-zsh/custom/completions/
+exec zsh
+```
+
+Oh My Zsh automatically adds `$ZSH_CUSTOM/completions` to `fpath` and
+runs `compinit` on startup, so a fresh shell picks these up with no
+other config needed. If they don't show up right away:
+
+```bash
+rm -f ~/.zcompdump*
+compinit
+```
+
+**Without Oh My Zsh**, add the `completions/` directory to your own
+`fpath` before `compinit` runs in `.zshrc`:
+
+```zsh
+fpath=(/path/to/Searxng-Mullvad/completions $fpath)
+autoload -Uz compinit && compinit
+```
+
 ## Example stack
 
 If you don't already have a gluetun + Mullvad stack running, this repo
