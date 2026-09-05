@@ -1,10 +1,11 @@
-# mullvad-gluetun-toolkit
+# Searxng-Mullvad
 
 Small bash toolkit for monitoring, rotating, and self-healing a
 [gluetun](https://github.com/qdm12/gluetun)-based Mullvad WireGuard
-tunnel in Docker. Built around a common pattern: a `gluetun` container
-holding the VPN tunnel, with one or more app containers sharing its
-network via `network_mode: "service:gluetun"`.
+tunnel in Docker. Originally built for a SearXNG + gluetun setup, but
+generic underneath -- it works with any container (or pair of
+containers) sharing gluetun's network via
+`network_mode: "service:gluetun"`, not just SearXNG.
 
 - **`mullvad-status`** -- live dashboard / one-shot status check,
   exit-server history log, country rotation, self-healing restart, and
@@ -33,8 +34,8 @@ coreutils.
 ## Install
 
 ```bash
-git clone https://github.com/<you>/mullvad-gluetun-toolkit.git
-cd mullvad-gluetun-toolkit
+git clone https://github.com/techfixpros/Searxng-Mullvad.git
+cd Searxng-Mullvad
 ./install.sh
 ```
 
