@@ -78,7 +78,7 @@ change it to:
 plugins=(git docker mullvad-status mullvad-discovery)
 ```
 
-Restart your shell (or `exec zsh`) to pick them up. If completions
+Run `source ~/.zshrc` to pick them up. If completions
 don't show up right away:
 
 ```bash
