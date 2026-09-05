@@ -1,0 +1,10 @@
+#compdef mullvad-discovery
+
+_mullvad_discovery() {
+    _arguments \
+        '(-h --help)'{-h,--help}'[Show help and exit]' \
+        '--count=[Number of rotations to run]:count:' \
+        '1:number of rotations (optional, prompts if omitted):'
+}
+
+_mullvad_discovery "$@"

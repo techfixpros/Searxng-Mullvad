@@ -1,0 +1,14 @@
+#compdef mullvad-status
+
+_mullvad_status() {
+    _arguments \
+        '(-h --help)'{-h,--help}'[Show help and exit]' \
+        '--monitor[Live dashboard mode, re-checks on an interval]' \
+        '--interval=[Set the check interval in seconds for --monitor]:seconds:' \
+        '--once[Explicit one-shot check (same as running with no options)]' \
+        '--rotate[Rotate to the next country and recreate the tunnel]' \
+        '--heal[Restart the tunnel if it is unhealthy]' \
+        '--service=[Install, disable, or remove the scheduled systemd timers]:action:(install disable remove)'
+}
+
+_mullvad_status "$@"
