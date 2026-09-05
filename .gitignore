@@ -1,0 +1,10 @@
+# Local runtime state -- never commit real deployment data
+mullvad.conf
+history.db
+country-index
+*.log
+
+# Editor/OS junk
+.DS_Store
+*.swp
+*~

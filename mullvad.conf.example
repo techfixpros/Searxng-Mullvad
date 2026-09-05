@@ -1,0 +1,52 @@
+# mullvad.conf - settings for mullvad-status
+# This file is sourced as bash, so it must stay valid shell syntax.
+# Edit values below, then just re-run mullvad-status -- no restart
+# of anything else needed, it's read fresh on every invocation.
+#
+# EDIT ALL OF THIS to match your own setup before relying on --rotate
+# or --heal -- the defaults below are just generic placeholders.
+
+# Name of the gluetun container running the Mullvad WireGuard tunnel
+# (the actual container name, e.g. from `docker ps`, not the compose
+# service name -- those can differ).
+CONTAINER="gluetun"
+
+# How often (seconds) --monitor mode re-checks by default.
+# Override per-run with --interval=N.
+CHECK_INTERVAL=60
+
+# Where the history log of exit servers is kept.
+DB_FILE="$DATA_DIR/history.db"
+
+# Optional: name of a second container that shares gluetun's network
+# namespace (network_mode: "service:gluetun") and therefore needs
+# restarting alongside it whenever --heal restarts the tunnel. Leave
+# blank if you don't have one -- --heal will just restart CONTAINER
+# by itself in that case.
+APP_CONTAINER=""
+
+# --- Settings used only by --rotate ---
+
+# Directory containing the docker-compose.yml and env file for your
+# gluetun stack.
+COMPOSE_DIR="$HOME/gluetun"
+
+# Name of the env file (inside COMPOSE_DIR) whose SERVER_COUNTRIES
+# line gets updated on each rotation.
+ENV_FILE_NAME=".env"
+
+# Space-separated compose SERVICE names (as they appear in
+# docker-compose.yml, not container names) to force-recreate on each
+# rotation. Usually just your VPN service; add a second name if you
+# have a paired app service sharing its network, e.g. "gluetun app".
+ROTATE_SERVICES="gluetun"
+
+# File that tracks which country was used last, so rotation advances
+# round-robin through the list below instead of repeating.
+STATE_FILE="$DATA_DIR/country-index"
+
+# Countries to round-robin through on each --rotate call. Must be
+# exact country names/abbreviations your VPN provider's gluetun
+# integration accepts for its SERVER_COUNTRIES filter. This example
+# list is almost certainly wrong for your subscription -- replace it.
+COUNTRIES=("Netherlands" "Sweden" "USA")
