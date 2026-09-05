@@ -52,29 +52,45 @@ To install somewhere else instead:
 
 ## Shell completion (zsh)
 
-Tab completion for both commands is included, tested with
-[Oh My Zsh](https://ohmyz.sh/):
+Tab completion for both commands is included as two Oh My Zsh plugins
+(one per command -- Oh My Zsh recognizes a plugin folder automatically
+when it contains a completion file whose name matches the folder,
+e.g. `mullvad-status/_mullvad-status`, no extra plugin file needed):
 
 ```bash
-mkdir -p ~/.oh-my-zsh/custom/completions
-cp completions/_mullvad-status completions/_mullvad-discovery ~/.oh-my-zsh/custom/completions/
-exec zsh
+mkdir -p ~/.oh-my-zsh/custom/plugins/mullvad-status
+mkdir -p ~/.oh-my-zsh/custom/plugins/mullvad-discovery
+cp zsh/_mullvad-status ~/.oh-my-zsh/custom/plugins/mullvad-status/
+cp zsh/_mullvad-discovery ~/.oh-my-zsh/custom/plugins/mullvad-discovery/
 ```
 
-Oh My Zsh automatically adds `$ZSH_CUSTOM/completions` to `fpath` and
-runs `compinit` on startup, so a fresh shell picks these up with no
-other config needed. If they don't show up right away:
+Then append both to the existing `plugins=(...)` line in `~/.zshrc`
+(don't replace whatever's already there -- just add these two to the
+list). For example, if your line currently reads:
+
+```zsh
+plugins=(git docker)
+```
+
+change it to:
+
+```zsh
+plugins=(git docker mullvad-status mullvad-discovery)
+```
+
+Restart your shell (or `exec zsh`) to pick them up. If completions
+don't show up right away:
 
 ```bash
 rm -f ~/.zcompdump*
 compinit
 ```
 
-**Without Oh My Zsh**, add the `completions/` directory to your own
+**Without Oh My Zsh**, add the `zsh/` directory to your own
 `fpath` before `compinit` runs in `.zshrc`:
 
 ```zsh
-fpath=(/path/to/Searxng-Mullvad/completions $fpath)
+fpath=(/path/to/Searxng-Mullvad/zsh $fpath)
 autoload -Uz compinit && compinit
 ```
 
