@@ -63,6 +63,13 @@ STATE_FILE="$DATA_DIR/country-index"
 # integration accepts for its SERVER_COUNTRIES filter. This example
 # list is almost certainly wrong for your subscription -- replace it.
 COUNTRIES=("Netherlands" "Germany" "Sweden" "USA" "UK" "Canada")
+
+# --- Settings used only by --test ---
+
+# URL fetched (via wget, from inside CONTAINER) to confirm the tunnel
+# is actually passing real web traffic, not just reporting connected.
+# Override per-run with --test=<url>.
+TEST_URL="https://www.google.com"
 CONF
 }
 
@@ -77,6 +84,7 @@ ENV_FILE_NAME=".env"
 ROTATE_SERVICES="gluetun"
 STATE_FILE="$DATA_DIR/country-index"
 COUNTRIES=("Netherlands" "Germany" "Sweden" "USA" "UK" "Canada")
+TEST_URL="https://www.google.com"
 
 if [[ ! -f "$CONF_FILE" ]]; then
     write_default_conf
@@ -170,6 +178,15 @@ OPTIONS:
                         unit file in place -- use --activate to turn it
                         back on later.
 
+    --test              Fetch TEST_URL (from mullvad.conf) via wget
+                        from inside APP_CONTAINER if one is set,
+                        otherwise CONTAINER -- to confirm the tunnel is
+                        actually passing real web traffic for the app
+                        that matters, not just reporting connected.
+                        Reports success/failure and response time.
+    --test=URL           Same, but fetch URL instead of TEST_URL for
+                        this one run.
+
     -h, --help          Show this help and exit.
 
 CONFIG FILE:
@@ -194,6 +211,8 @@ EXAMPLES:
     mullvad-status --verbose        # wide one-shot dashboard, everything
     mullvad-status --activate       # turn on scheduled rotation
     mullvad-status --disable        # turn off scheduled rotation
+    mullvad-status --test           # confirm real web traffic passes through
+    mullvad-status --test=https://example.com
     mullvad-status --service=install    # set up scheduled rotate+heal
     mullvad-status --service=remove     # tear it back down
 HELP
@@ -211,6 +230,8 @@ for arg in "$@"; do
         --verbose) MODE="verbose" ;;
         --activate) MODE="activate" ;;
         --disable) MODE="disable_timer" ;;
+        --test) MODE="test" ;;
+        --test=*) MODE="test"; TEST_URL_OVERRIDE="${arg#--test=}" ;;
         --service=*) MODE="service"; SERVICE_ACTION="${arg#--service=}" ;;
         --interval=*) CHECK_INTERVAL="${arg#--interval=}" ;;
         *)
@@ -613,6 +634,44 @@ do_heal() {
     # healthy: do nothing, exit quietly (this runs every minute via
     # --service install, no need to print anything when there's nothing
     # to fix)
+}
+
+do_test() {
+    # Prefer APP_CONTAINER when one's configured -- it tests the exact
+    # path the actual app's traffic takes (DNS resolution and all),
+    # not just that gluetun's own tunnel interface works. Falls back
+    # to CONTAINER for setups with no paired app container.
+    local target_container
+    if [[ -n "$APP_CONTAINER" ]]; then
+        target_container="$APP_CONTAINER"
+    else
+        target_container="$CONTAINER"
+    fi
+
+    if ! docker inspect "$target_container" >/dev/null 2>&1; then
+        printf "%s[X] Container '%s' not found.%s\n" "$RED" "$target_container" "$RESET"
+        return 1
+    fi
+
+    local url="${TEST_URL_OVERRIDE:-${TEST_URL:-https://www.google.com}}"
+    echo "$(date -Iseconds) testing web access through $target_container -> $url"
+
+    local start end elapsed
+    start=$(date +%s.%N)
+    # wget, not curl -- gluetun's and most searxng-style Alpine-based
+    # images reliably ship at least busybox's wget applet (used
+    # throughout this script's own checks), but curl isn't guaranteed
+    # to be present.
+    if docker exec "$target_container" wget -q -O /dev/null --timeout=10 "$url" 2>/dev/null; then
+        end=$(date +%s.%N)
+        elapsed=$(awk -v s="$start" -v e="$end" 'BEGIN { printf "%.2f", e - s }')
+        printf "%s[OK] %s reachable through the tunnel (%ss)%s\n" "$GREEN" "$url" "$elapsed" "$RESET"
+    else
+        end=$(date +%s.%N)
+        elapsed=$(awk -v s="$start" -v e="$end" 'BEGIN { printf "%.2f", e - s }')
+        printf "%s[X] %s NOT reachable through the tunnel (failed after %ss)%s\n" "$RED" "$url" "$elapsed" "$RESET"
+        return 1
+    fi
 }
 
 SERVICE_UNITS=(
@@ -1184,6 +1243,11 @@ fi
 
 if [[ "$MODE" == "disable_timer" ]]; then
     do_disable_timer
+    exit $?
+fi
+
+if [[ "$MODE" == "test" ]]; then
+    do_test
     exit $?
 fi
 

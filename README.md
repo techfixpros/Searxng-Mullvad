@@ -69,6 +69,7 @@ setup (see [`mullvad.conf.example`](./mullvad.conf.example)):
 | `ENV_FILE_NAME` | Env file whose `SERVER_COUNTRIES`/`SERVER_HOSTNAMES` line gets updated |
 | `ROTATE_SERVICES` | Compose **service** names to recreate on rotation |
 | `COUNTRIES` | Countries to round-robin through |
+| `TEST_URL` | URL fetched by `--test` to confirm real traffic passes through |
 
 `mullvad-discovery` reads `CONTAINER`/`DB_FILE` from the same file.
 
@@ -84,6 +85,7 @@ setup (see [`mullvad.conf.example`](./mullvad.conf.example)):
 | `mullvad-status --verbose` | Wide one-shot dump: every server, timer state, full config files |
 | `mullvad-status --service=install\|disable\|remove` | Manage both scheduled timers together |
 | `mullvad-status --activate` / `--disable` | Toggle just the rotate timer |
+| `mullvad-status --test [=URL]` | Fetch a URL through `APP_CONTAINER` (or `CONTAINER` if unset) to confirm real traffic passes, not just "connected" |
 | `mullvad-discovery [N]` | Run N rotations back-to-back to populate history |
 
 Full flag reference: `mullvad-status --help` / `mullvad-discovery --help`.

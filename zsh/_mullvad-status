@@ -12,6 +12,8 @@ _mullvad_status() {
         '--verbose[Wide one-shot dashboard: all servers, service state, and config files]' \
         '--activate[Enable the mullvad-rotate.timer specifically]' \
         '--disable[Disable the mullvad-rotate.timer specifically]' \
+        '--test[Fetch TEST_URL through APP_CONTAINER (or CONTAINER) to confirm real traffic passes]' \
+        '--test=[Fetch a specific URL through the app container for this run]:url:' \
         '--service=[Install, disable, or remove the scheduled systemd timers]:action:(install disable remove)'
 }
 
