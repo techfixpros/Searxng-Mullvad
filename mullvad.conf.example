@@ -50,3 +50,10 @@ STATE_FILE="$DATA_DIR/country-index"
 # integration accepts for its SERVER_COUNTRIES filter. This example
 # list is almost certainly wrong for your subscription -- replace it.
 COUNTRIES=("Netherlands" "Germany" "Sweden" "USA" "UK" "Canada")
+
+# --- Settings used only by --test ---
+
+# URL fetched (via wget, from inside CONTAINER) to confirm the tunnel
+# is actually passing real web traffic, not just reporting connected.
+# Override per-run with --test=<url>.
+TEST_URL="https://www.google.com"

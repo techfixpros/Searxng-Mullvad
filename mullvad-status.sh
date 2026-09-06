@@ -141,6 +141,11 @@ OPTIONS:
                         ".. Back" or q to go back/cancel. Requires a
                         terminal -- not for cron/timers.
 
+    --setup             Interactive wizard that prompts for each
+                        mullvad.conf setting (Enter keeps the current
+                        value) and writes the result. Alternative to
+                        hand-editing the file. Requires a terminal.
+
     --heal              Check CONTAINER's Docker health status; if
                         unhealthy, restart CONTAINER, then APP_CONTAINER
                         too if one is set, and exit. Does nothing if
@@ -205,6 +210,7 @@ EXAMPLES:
     mullvad-status                  # single check, print, exit
     mullvad-status --monitor        # live dashboard, 60s interval
     mullvad-status --monitor --interval=30
+    mullvad-status --setup          # interactive mullvad.conf wizard
     mullvad-status --rotate         # rotate to the next country
     mullvad-status --select         # pick a specific known server
     mullvad-status --heal           # restart tunnel if unhealthy
@@ -226,6 +232,7 @@ for arg in "$@"; do
         --once) MODE="once" ;;
         --rotate) MODE="rotate" ;;
         --select) MODE="select" ;;
+        --setup) MODE="setup" ;;
         --heal) MODE="heal" ;;
         --verbose) MODE="verbose" ;;
         --activate) MODE="activate" ;;
@@ -282,23 +289,32 @@ remove_env_line() {
 # of leaving it cycling through the full original list. Uses awk
 # rather than sed for the replacement to sidestep quoting/escaping
 # issues with the parentheses and quotes in the array literal.
-set_conf_countries() {
-    local -a new_countries=("$@")
-    local joined line
-    joined=$(printf '"%s" ' "${new_countries[@]}")
-    joined="${joined% }"
-    line="COUNTRIES=(${joined})"
+# Rewrites (or appends) a KEY=VALUE line in CONF_FILE. Uses awk rather
+# than sed for the replacement to sidestep delimiter/escaping issues
+# with values containing slashes (paths), quotes, or other characters
+# sed's s/// would choke on.
+set_conf_line() {
+    local key="$1" value="$2" line
+    line="${key}=${value}"
 
-    if grep -q '^COUNTRIES=' "$CONF_FILE"; then
+    if grep -q "^${key}=" "$CONF_FILE"; then
         local tmp
         tmp=$(mktemp)
-        awk -v newline="$line" '
-            /^COUNTRIES=/ { print newline; next }
+        awk -v newline="$line" -v pat="^${key}=" '
+            $0 ~ pat { print newline; next }
             { print }
         ' "$CONF_FILE" > "$tmp" && mv "$tmp" "$CONF_FILE"
     else
         echo "$line" >> "$CONF_FILE"
     fi
+}
+
+set_conf_countries() {
+    local -a new_countries=("$@")
+    local joined
+    joined=$(printf '"%s" ' "${new_countries[@]}")
+    joined="${joined% }"
+    set_conf_line "COUNTRIES" "(${joined})"
 }
 
 do_rotate() {
@@ -1016,6 +1032,92 @@ confirm() {
     [[ "$reply" =~ ^[Yy]$ ]]
 }
 
+# Prompts with a shown default (current value if set, else the given
+# fallback); Enter keeps it. Sets PROMPT_RESULT rather than echoing,
+# since echoing from inside a $(...) subshell would still work here
+# but a plain variable is simpler to reason about and matches how
+# radio_menu() returns its choice elsewhere in this script.
+prompt_value() {
+    local label="$1" current="$2" fallback="$3"
+    local shown_default="${current:-$fallback}"
+    local input
+    read -rp "$label [$shown_default]: " input
+    if [[ -z "$input" ]]; then
+        PROMPT_RESULT="$shown_default"
+    else
+        PROMPT_RESULT="$input"
+    fi
+}
+
+do_setup() {
+    echo "${BOLD}Interactive setup for mullvad.conf${RESET}"
+    echo "Press Enter to keep the value shown in [brackets]."
+    echo
+
+    prompt_value "Container name (CONTAINER)" "$CONTAINER" "gluetun"
+    local new_container="$PROMPT_RESULT"
+
+    prompt_value "Paired app container, if any (APP_CONTAINER)" "$APP_CONTAINER" ""
+    local new_app_container="$PROMPT_RESULT"
+
+    prompt_value "Compose directory (COMPOSE_DIR)" "$COMPOSE_DIR" "$HOME/gluetun"
+    local new_compose_dir="$PROMPT_RESULT"
+
+    prompt_value "Env file name (ENV_FILE_NAME)" "$ENV_FILE_NAME" ".env"
+    local new_env_file_name="$PROMPT_RESULT"
+
+    prompt_value "Compose service names to recreate on rotate (ROTATE_SERVICES)" "$ROTATE_SERVICES" "gluetun"
+    local new_rotate_services="$PROMPT_RESULT"
+
+    prompt_value "Check interval in seconds for --monitor (CHECK_INTERVAL)" "$CHECK_INTERVAL" "60"
+    local new_check_interval="$PROMPT_RESULT"
+
+    local current_countries_joined
+    current_countries_joined=$(IFS=,; echo "${COUNTRIES[*]}")
+    prompt_value "Countries to rotate through, comma-separated (COUNTRIES)" "$current_countries_joined" "Netherlands,Germany,Sweden,USA,UK,Canada"
+    local -a new_countries=()
+    local raw_country trimmed
+    IFS=',' read -ra new_countries <<< "$PROMPT_RESULT"
+    local i
+    for i in "${!new_countries[@]}"; do
+        raw_country="${new_countries[$i]}"
+        trimmed="${raw_country#"${raw_country%%[![:space:]]*}"}"
+        trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+        new_countries[$i]="$trimmed"
+    done
+
+    prompt_value "URL for --test (TEST_URL)" "$TEST_URL" "https://www.google.com"
+    local new_test_url="$PROMPT_RESULT"
+
+    echo
+    echo "${BOLD}Summary:${RESET}"
+    printf "  CONTAINER=%s\n" "$new_container"
+    printf "  APP_CONTAINER=%s\n" "$new_app_container"
+    printf "  COMPOSE_DIR=%s\n" "$new_compose_dir"
+    printf "  ENV_FILE_NAME=%s\n" "$new_env_file_name"
+    printf "  ROTATE_SERVICES=%s\n" "$new_rotate_services"
+    printf "  CHECK_INTERVAL=%s\n" "$new_check_interval"
+    printf "  COUNTRIES=(%s)\n" "$(printf '"%s" ' "${new_countries[@]}")"
+    printf "  TEST_URL=%s\n" "$new_test_url"
+    echo
+
+    if ! confirm "Write these settings to $CONF_FILE?"; then
+        echo "Cancelled -- no changes made."
+        return 1
+    fi
+
+    set_conf_line "CONTAINER" "\"$new_container\""
+    set_conf_line "APP_CONTAINER" "\"$new_app_container\""
+    set_conf_line "COMPOSE_DIR" "\"$new_compose_dir\""
+    set_conf_line "ENV_FILE_NAME" "\"$new_env_file_name\""
+    set_conf_line "ROTATE_SERVICES" "\"$new_rotate_services\""
+    set_conf_line "CHECK_INTERVAL" "$new_check_interval"
+    set_conf_line "TEST_URL" "\"$new_test_url\""
+    set_conf_countries "${new_countries[@]}"
+
+    printf "%s[OK] Updated %s%s\n" "$GREEN" "$CONF_FILE" "$RESET"
+}
+
 border() {
     local char="$1"
     printf "%s+" "$CYAN"
@@ -1209,6 +1311,15 @@ fi
 
 if [[ "$MODE" == "select" ]]; then
     do_select
+    exit $?
+fi
+
+if [[ "$MODE" == "setup" ]]; then
+    if [[ ! -t 0 ]]; then
+        printf "%s[X] --setup requires an interactive terminal%s\n" "$RED" "$RESET"
+        exit 1
+    fi
+    do_setup
     exit $?
 fi
 

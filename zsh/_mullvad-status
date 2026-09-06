@@ -8,6 +8,7 @@ _mullvad_status() {
         '--once[Explicit one-shot check (same as running with no options)]' \
         '--rotate[Rotate to the next country and recreate the tunnel]' \
         '--select[Interactive tiered menu to choose a country or pin a specific exit]' \
+        '--setup[Interactive wizard to configure mullvad.conf]' \
         '--heal[Restart the tunnel if it is unhealthy]' \
         '--verbose[Wide one-shot dashboard: all servers, service state, and config files]' \
         '--activate[Enable the mullvad-rotate.timer specifically]' \

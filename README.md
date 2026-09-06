@@ -58,8 +58,10 @@ URL). Both files are gitignored once copied. Then `docker compose up -d`.
 ## Configure
 
 Run `mullvad-status` once. It auto-creates
-`~/.local/share/mullvad-status/mullvad.conf` -- edit it to match your
-setup (see [`mullvad.conf.example`](./mullvad.conf.example)):
+`~/.local/share/mullvad-status/mullvad.conf` -- edit it by hand, or run
+`mullvad-status --setup` for an interactive wizard that prompts for
+each setting (Enter keeps the current value). See
+[`mullvad.conf.example`](./mullvad.conf.example) for the full file:
 
 | Setting | What it is |
 |---|---|
@@ -81,6 +83,7 @@ setup (see [`mullvad.conf.example`](./mullvad.conf.example)):
 | `mullvad-status --monitor [--interval=N]` | Live dashboard, re-checks every 60s (default) |
 | `mullvad-status --rotate` | Next country in `COUNTRIES`, recreates the tunnel |
 | `mullvad-status --select` | Arrow-key menu: all countries, a specific country, or pin one exact exit server |
+| `mullvad-status --setup` | Interactive wizard to configure `mullvad.conf` |
 | `mullvad-status --heal` | Restart the tunnel if unhealthy (safe to run on a timer) |
 | `mullvad-status --verbose` | Wide one-shot dump: every server, timer state, full config files |
 | `mullvad-status --service=install\|disable\|remove` | Manage both scheduled timers together |
