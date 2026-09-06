@@ -139,6 +139,14 @@ OPTIONS:
                         already healthy. Meant to be run periodically
                         (see --service below).
 
+    --verbose           One-shot wide dashboard: the normal status
+                        panel plus every known exit server (no 20-row
+                        cap), the scheduled-service install/active
+                        state for both timers, and the raw contents of
+                        the env file (WIREGUARD_PRIVATE_KEY redacted)
+                        and mullvad.conf. Wider than the normal panel
+                        to fit all of this without truncating.
+
     --service=ACTION    Manage the systemd timers that run --rotate and
                         --heal on a schedule. ACTION is one of:
                           install   create + enable both timers
@@ -171,6 +179,7 @@ EXAMPLES:
     mullvad-status --rotate         # rotate to the next country
     mullvad-status --select         # pick a specific known server
     mullvad-status --heal           # restart tunnel if unhealthy
+    mullvad-status --verbose        # wide one-shot dashboard, everything
     mullvad-status --service=install    # set up scheduled rotate+heal
     mullvad-status --service=remove     # tear it back down
 HELP
@@ -185,6 +194,7 @@ for arg in "$@"; do
         --rotate) MODE="rotate" ;;
         --select) MODE="select" ;;
         --heal) MODE="heal" ;;
+        --verbose) MODE="verbose" ;;
         --service=*) MODE="service"; SERVICE_ACTION="${arg#--service=}" ;;
         --interval=*) CHECK_INTERVAL="${arg#--interval=}" ;;
         *)
@@ -554,25 +564,42 @@ require_systemctl() {
     fi
 }
 
-# Reports "not_installed", "active", or "inactive" for
-# mullvad-rotate.timer specifically -- used by --select to warn about
-# (or offer to fix) interactions between a manual pick and the
-# scheduled rotation timer. Prints nothing; caller checks the echoed
-# value. Never exits the script (unlike require_systemctl) -- this is
-# an optional, best-effort check that should degrade silently if
-# systemctl isn't available at all.
-rotate_timer_status() {
+# Reports "not_installed", "active", "inactive", or "unavailable"
+# (systemctl not present at all) for the given systemd unit name.
+# Prints nothing; caller checks the echoed value. Never exits the
+# script -- this is an optional, best-effort check that should
+# degrade silently rather than error out.
+timer_status_of() {
+    local unit="$1"
     if ! command -v systemctl >/dev/null 2>&1; then
         echo "unavailable"
         return
     fi
-    if [[ ! -f "$UNIT_DIR/mullvad-rotate.timer" ]]; then
+    if [[ ! -f "$UNIT_DIR/$unit" ]]; then
         echo "not_installed"
-    elif systemctl is-active --quiet mullvad-rotate.timer 2>/dev/null; then
+    elif systemctl is-active --quiet "$unit" 2>/dev/null; then
         echo "active"
     else
         echo "inactive"
     fi
+}
+
+# Kept as a thin wrapper -- used by --select to warn about (or offer
+# to fix) interactions between a manual pick and scheduled rotation.
+rotate_timer_status() {
+    timer_status_of "mullvad-rotate.timer"
+}
+
+# Human-readable text for a timer_status_of()/rotate_timer_status()
+# value, used in --verbose's services section.
+describe_timer_status() {
+    case "$1" in
+        active)        echo "installed, active" ;;
+        inactive)      echo "installed, inactive" ;;
+        not_installed) echo "not installed" ;;
+        unavailable)   echo "systemctl unavailable" ;;
+        *)             echo "unknown" ;;
+    esac
 }
 
 do_service_install() {
@@ -652,6 +679,147 @@ do_service_remove() {
     done
     sudo systemctl daemon-reload
     printf "%s[OK] Removed all mullvad-status systemd units%s\n" "$RED" "$RESET"
+}
+
+# Displays a KEY=VALUE style file (env file or mullvad.conf) with
+# comments and blank lines stripped, variable names colored to stand
+# out from their values, and any name in expected_ref that's missing
+# from the file shown as "<NAME>=UNSET" in a warning color. redact_key
+# (optional) has its value replaced with <redacted> rather than shown.
+display_config_kv() {
+    local path="$1" redact_key="${3:-}"
+    local -n expected_ref=$2
+
+    if [[ ! -f "$path" ]]; then
+        printf "%s(not found)%s\n" "$RED" "$RESET"
+        return
+    fi
+
+    local -a found_keys=()
+    local line key value
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            found_keys+=("$key")
+            if [[ -n "$redact_key" && "$key" == "$redact_key" ]]; then
+                printf "%s%s%s=%s<redacted>%s\n" "$CYAN" "$key" "$RESET" "$DIM" "$RESET"
+            else
+                printf "%s%s%s=%s\n" "$CYAN" "$key" "$RESET" "$value"
+            fi
+        fi
+    done < "$path"
+
+    local exp seen k
+    for exp in "${expected_ref[@]}"; do
+        seen=0
+        for k in "${found_keys[@]}"; do
+            if [[ "$k" == "$exp" ]]; then
+                seen=1
+                break
+            fi
+        done
+        if [[ "$seen" -eq 0 ]]; then
+            printf "%s%s=UNSET%s\n" "$YELLOW" "$exp" "$RESET"
+        fi
+    done
+}
+
+do_verbose() {
+    if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+        printf "%s[X] Container '%s' not found.%s\n" "$RED" "$CONTAINER" "$RESET"
+        return 1
+    fi
+
+    do_check
+
+    # Wider box for this mode only -- border()/content_line() read
+    # INNER_WIDTH fresh on every call, so just changing it here is
+    # enough. Not restored afterward since --verbose always exits
+    # right after this function returns.
+    INNER_WIDTH=100
+
+    echo
+    box_top
+    content_line " Mullvad Tunnel Status - ${CONTAINER} (verbose)" "$BOLD"
+    box_line
+
+    if [[ -n "${JSON:-}" ]]; then
+        if [[ "$MULLVAD_EXIT" == "true" ]]; then
+            row " Status:" "[UP] CONNECTED" "$GREEN"
+        else
+            row " Status:" "[X] NOT CONNECTED" "$RED"
+        fi
+        row " Public IP:" "${IP:-unknown}"
+        row " Location:" "${CITY:-?}, ${COUNTRY:-?}"
+        row " Exit server:" "${HOSTNAME:-unknown}"
+        if [[ -n "${TUN_PKTS:-}" ]]; then
+            row " Tunnel traffic:" "$(printf '%s pkts / %s' "$TUN_PKTS" "$(human_bytes "${TUN_BYTES:-0}")")"
+        fi
+    elif [[ -n "${CONNECTED_TEXT:-}" ]]; then
+        row " Status:" "(fallback check)" "$YELLOW"
+        content_line " ${CONNECTED_TEXT}"
+    else
+        row " Status:" "[X] UNREACHABLE" "$RED"
+    fi
+
+    box_line
+    content_line " All known exit servers:" "$BOLD"
+    content_line "$(printf '%-2s%-18s %-30s %5s  %-25s' '' 'SERVER' 'LOCATION' 'CNT' 'LAST SEEN')"
+
+    local any=0 server ts loc count
+    while IFS='|' read -r server ts loc count; do
+        [[ -z "$server" ]] && continue
+        any=1
+        loc=$(transliterate "$loc")
+        local marker="  " color=""
+        if [[ "$server" == "${HOSTNAME:-__none__}" ]]; then
+            marker="> "
+            color="$GREEN"
+        fi
+        content_line "$(printf "%s%-18.18s %-30.30s %5s  %-25.25s" "$marker" "$server" "$loc" "$count" "$ts")" "$color"
+    done < <(server_table_rows)
+
+    if [[ "$any" -eq 0 ]]; then
+        content_line "  (no history yet)" "$DIM"
+    fi
+
+    box_line
+    if [[ -n "${LOG_LINE:-}" ]]; then
+        local clean_log
+        clean_log=$(echo "$LOG_LINE" | sed -E 's/^.*msg="//; s/"$//')
+        clean_log=$(transliterate "$clean_log")
+        content_line " Last log:" "$DIM"
+        echo "$clean_log" | fold -s -w $((INNER_WIDTH - 1)) | while IFS= read -r line; do
+            content_line " ${line}" "$DIM"
+        done
+    fi
+
+    box_line
+    content_line " Scheduled services:" "$BOLD"
+    local rot_status heal_status
+    rot_status=$(timer_status_of "mullvad-rotate.timer")
+    heal_status=$(timer_status_of "mullvad-healthwatch.timer")
+    row "  mullvad-rotate.timer:" "$(describe_timer_status "$rot_status")"
+    row "  mullvad-healthwatch.timer:" "$(describe_timer_status "$heal_status")"
+
+    row " Last run:" "$LAST_RUN_TS" "$DIM"
+    box_bottom
+    echo
+
+    local env_path="$COMPOSE_DIR/$ENV_FILE_NAME"
+    local -a env_expected_keys=(WIREGUARD_PRIVATE_KEY WIREGUARD_ADDRESSES SERVER_COUNTRIES SERVER_HOSTNAMES)
+    printf "%s--- %s ---%s\n" "$BOLD" "$env_path" "$RESET"
+    display_config_kv "$env_path" env_expected_keys "WIREGUARD_PRIVATE_KEY"
+    echo
+
+    local -a conf_expected_keys=(CONTAINER CHECK_INTERVAL DB_FILE APP_CONTAINER COMPOSE_DIR ENV_FILE_NAME ROTATE_SERVICES STATE_FILE COUNTRIES)
+    printf "%s--- %s ---%s\n" "$BOLD" "$CONF_FILE" "$RESET"
+    display_config_kv "$CONF_FILE" conf_expected_keys
+    echo
 }
 
 human_bytes() {
@@ -899,6 +1067,11 @@ if [[ "$MODE" == "service" ]]; then
             exit 1
             ;;
     esac
+    exit $?
+fi
+
+if [[ "$MODE" == "verbose" ]]; then
+    do_verbose
     exit $?
 fi
 
