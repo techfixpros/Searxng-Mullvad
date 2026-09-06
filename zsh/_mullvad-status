@@ -7,7 +7,11 @@ _mullvad_status() {
         '--interval=[Set the check interval in seconds for --monitor]:seconds:' \
         '--once[Explicit one-shot check (same as running with no options)]' \
         '--rotate[Rotate to the next country and recreate the tunnel]' \
+        '--select[Interactive tiered menu to choose a country or pin a specific exit]' \
         '--heal[Restart the tunnel if it is unhealthy]' \
+        '--verbose[Wide one-shot dashboard: all servers, service state, and config files]' \
+        '--activate[Enable the mullvad-rotate.timer specifically]' \
+        '--disable[Disable the mullvad-rotate.timer specifically]' \
         '--service=[Install, disable, or remove the scheduled systemd timers]:action:(install disable remove)'
 }
 

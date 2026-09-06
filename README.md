@@ -177,8 +177,9 @@ mullvad-status --monitor --interval=30
 The dashboard shows current connection status, public IP, location,
 exit server, a real tunnel-traffic byte/packet counter (read directly
 from `iptables`, independent of any external API response), and a
-running table of every distinct exit server you've used, with the
-current one highlighted.
+running table of the 20 most recently used exit servers, with the
+current one highlighted and a `+ N other servers` line if you have
+more than that (use `--verbose` to see the full list).
 
 ### Rotation
 
@@ -189,6 +190,41 @@ mullvad-status --rotate
 Advances to the next country in `COUNTRIES` (round-robin), updates
 `SERVER_COUNTRIES` in your env file, and recreates the relevant compose
 services.
+
+### Choosing a specific country or exit
+
+```bash
+mullvad-status --select
+```
+
+An interactive, arrow-key menu (radio-button style) for picking
+exactly how the tunnel connects, instead of waiting for `--rotate` to
+cycle to it:
+
+- **All Countries** -- sets `SERVER_COUNTRIES` to your full configured
+  list (comma-joined), same scope as normal rotation
+- **A specific known country** -- sets `SERVER_COUNTRIES` to just that
+  one country
+- **Single Exit >** -- drills into a country, then lists every server
+  you've actually used there, letting you pin the tunnel to one exact
+  server via `SERVER_HOSTNAMES`
+
+`SERVER_COUNTRIES` and `SERVER_HOSTNAMES` are mutually exclusive --
+whichever mode you pick, the other is cleared automatically so they
+never conflict.
+
+After applying your choice, it checks `mullvad-rotate.timer`'s current
+state and offers the matching fix: install it if missing, enable it if
+inactive, or disable it if active and about to override what you just
+picked. Picking a specific exit only ever offers to disable an
+already-active timer -- never to install or enable one, since
+scheduled rotation would immediately undo the pin.
+
+If you choose to install or enable the timer after picking "All
+Countries" or a specific country, you'll also be asked whether to
+update `COUNTRIES` in `mullvad.conf` to match -- so future scheduled
+rotations stay scoped to what you just selected instead of cycling
+through the original full list.
 
 ### Self-healing
 
@@ -216,6 +252,28 @@ Installs and enables two systemd timers:
 mullvad-status --service=disable   # stop the timers, keep the unit files
 mullvad-status --service=remove    # stop, disable, and delete everything
 ```
+
+For toggling just the rotation timer on its own (leaving
+`mullvad-healthwatch.timer` untouched either way):
+
+```bash
+mullvad-status --activate   # enable mullvad-rotate.timer (must already be installed)
+mullvad-status --disable    # disable mullvad-rotate.timer
+```
+
+### Full diagnostics
+
+```bash
+mullvad-status --verbose
+```
+
+A wider, one-shot dashboard for troubleshooting: the normal status
+header, **every** known exit server (no 20-row cap), both scheduled
+timers' install/active state, and the raw contents of your env file
+and `mullvad.conf` -- comments and blank lines stripped, variable
+names colored to stand out from their values, and any expected
+variable that's missing shown as `NAME=UNSET`. `WIREGUARD_PRIVATE_KEY`
+is always redacted.
 
 ### Discovering exit servers
 

@@ -49,4 +49,4 @@ STATE_FILE="$DATA_DIR/country-index"
 # exact country names/abbreviations your VPN provider's gluetun
 # integration accepts for its SERVER_COUNTRIES filter. This example
 # list is almost certainly wrong for your subscription -- replace it.
-COUNTRIES=("Netherlands" "Sweden" "USA")
+COUNTRIES=("Netherlands" "Germany" "Sweden" "USA" "UK" "Canada")

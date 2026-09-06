@@ -62,7 +62,7 @@ STATE_FILE="$DATA_DIR/country-index"
 # exact country names/abbreviations your VPN provider's gluetun
 # integration accepts for its SERVER_COUNTRIES filter. This example
 # list is almost certainly wrong for your subscription -- replace it.
-COUNTRIES=("Netherlands" "Sweden" "USA")
+COUNTRIES=("Netherlands" "Germany" "Sweden" "USA" "UK" "Canada")
 CONF
 }
 
@@ -76,7 +76,7 @@ COMPOSE_DIR="$HOME/gluetun"
 ENV_FILE_NAME=".env"
 ROTATE_SERVICES="gluetun"
 STATE_FILE="$DATA_DIR/country-index"
-COUNTRIES=("Netherlands" "Sweden" "USA")
+COUNTRIES=("Netherlands" "Germany" "Sweden" "USA" "UK" "Canada")
 
 if [[ ! -f "$CONF_FILE" ]]; then
     write_default_conf
@@ -158,6 +158,18 @@ OPTIONS:
                         (daily, +/-1h) and mullvad-healthwatch.timer
                         (every minute).
 
+    --activate          Enable mullvad-rotate.timer specifically (just
+                        this one timer, not healthwatch). Requires it
+                        to already be installed (see --service=install).
+                        A quick on/off switch for scheduled rotation --
+                        use --service=disable/remove instead if you
+                        want to tear down both timers together.
+
+    --disable           Disable mullvad-rotate.timer specifically (just
+                        this one timer, not healthwatch). Leaves the
+                        unit file in place -- use --activate to turn it
+                        back on later.
+
     -h, --help          Show this help and exit.
 
 CONFIG FILE:
@@ -180,6 +192,8 @@ EXAMPLES:
     mullvad-status --select         # pick a specific known server
     mullvad-status --heal           # restart tunnel if unhealthy
     mullvad-status --verbose        # wide one-shot dashboard, everything
+    mullvad-status --activate       # turn on scheduled rotation
+    mullvad-status --disable        # turn off scheduled rotation
     mullvad-status --service=install    # set up scheduled rotate+heal
     mullvad-status --service=remove     # tear it back down
 HELP
@@ -195,6 +209,8 @@ for arg in "$@"; do
         --select) MODE="select" ;;
         --heal) MODE="heal" ;;
         --verbose) MODE="verbose" ;;
+        --activate) MODE="activate" ;;
+        --disable) MODE="disable_timer" ;;
         --service=*) MODE="service"; SERVICE_ACTION="${arg#--service=}" ;;
         --interval=*) CHECK_INTERVAL="${arg#--interval=}" ;;
         *)
@@ -237,6 +253,31 @@ set_env_line() {
 remove_env_line() {
     local file="$1" key="$2"
     sed -i "/^${key}=/d" "$file"
+}
+
+# Rewrites (or appends) the COUNTRIES=(...) line in CONF_FILE to
+# exactly the country names passed in. Used by --select's post-pick
+# timer prompt to scope --rotate to whatever was just chosen, instead
+# of leaving it cycling through the full original list. Uses awk
+# rather than sed for the replacement to sidestep quoting/escaping
+# issues with the parentheses and quotes in the array literal.
+set_conf_countries() {
+    local -a new_countries=("$@")
+    local joined line
+    joined=$(printf '"%s" ' "${new_countries[@]}")
+    joined="${joined% }"
+    line="COUNTRIES=(${joined})"
+
+    if grep -q '^COUNTRIES=' "$CONF_FILE"; then
+        local tmp
+        tmp=$(mktemp)
+        awk -v newline="$line" '
+            /^COUNTRIES=/ { print newline; next }
+            { print }
+        ' "$CONF_FILE" > "$tmp" && mv "$tmp" "$CONF_FILE"
+    else
+        echo "$line" >> "$CONF_FILE"
+    fi
 }
 
 do_rotate() {
@@ -491,6 +532,28 @@ do_select() {
     # exact server just pinned, defeating the point of pinning it.
     # The disable-if-active branch still applies to every selection
     # type, since an already-active timer threatens any of them.
+    # Relies on result_mode/result_value/result_is_all_countries from
+    # the enclosing do_select() scope -- only ever called synchronously
+    # from within it, so bash's dynamic scoping makes them visible here
+    # without needing to pass them explicitly.
+    offer_scope_countries() {
+        local scope_desc
+        if [[ "$result_is_all_countries" -eq 1 ]]; then
+            scope_desc="the full country list"
+        else
+            scope_desc="$result_value"
+        fi
+        echo
+        if confirm "Update COUNTRIES in $CONF_FILE to scope rotation to $scope_desc?"; then
+            if [[ "$result_is_all_countries" -eq 1 ]]; then
+                set_conf_countries "${COUNTRIES[@]}"
+            else
+                set_conf_countries "$result_value"
+            fi
+            printf "%s[OK] Updated COUNTRIES in %s%s\n" "$GREEN" "$CONF_FILE" "$RESET"
+        fi
+    }
+
     local timer_status
     timer_status=$(rotate_timer_status)
     case "$timer_status" in
@@ -499,6 +562,7 @@ do_select() {
                 echo
                 if confirm "mullvad-rotate.timer isn't installed. Install and enable scheduled rotation (this also installs mullvad-healthwatch.timer)?"; then
                     do_service_install
+                    offer_scope_countries
                 fi
             fi
             ;;
@@ -508,6 +572,7 @@ do_select() {
                 if confirm "mullvad-rotate.timer is installed but not active. Enable it now?"; then
                     sudo systemctl enable --now mullvad-rotate.timer
                     printf "%s[OK] mullvad-rotate.timer enabled%s\n" "$GREEN" "$RESET"
+                    offer_scope_countries
                 fi
             fi
             ;;
@@ -599,6 +664,43 @@ describe_timer_status() {
         not_installed) echo "not installed" ;;
         unavailable)   echo "systemctl unavailable" ;;
         *)             echo "unknown" ;;
+    esac
+}
+
+do_activate_timer() {
+    require_systemctl
+    local status
+    status=$(timer_status_of "mullvad-rotate.timer")
+    case "$status" in
+        active)
+            printf "%smullvad-rotate.timer is already active%s\n" "$YELLOW" "$RESET"
+            ;;
+        inactive)
+            sudo systemctl enable --now mullvad-rotate.timer
+            printf "%s[OK] mullvad-rotate.timer enabled%s\n" "$GREEN" "$RESET"
+            ;;
+        not_installed)
+            printf "%s[X] mullvad-rotate.timer isn't installed -- run --service=install first%s\n" "$RED" "$RESET"
+            return 1
+            ;;
+    esac
+}
+
+do_disable_timer() {
+    require_systemctl
+    local status
+    status=$(timer_status_of "mullvad-rotate.timer")
+    case "$status" in
+        active)
+            sudo systemctl disable --now mullvad-rotate.timer
+            printf "%s[OK] mullvad-rotate.timer disabled%s\n" "$GREEN" "$RESET"
+            ;;
+        inactive)
+            printf "%smullvad-rotate.timer is already inactive%s\n" "$YELLOW" "$RESET"
+            ;;
+        not_installed)
+            printf "%smullvad-rotate.timer isn't installed -- nothing to disable%s\n" "$YELLOW" "$RESET"
+            ;;
     esac
 }
 
@@ -1072,6 +1174,16 @@ fi
 
 if [[ "$MODE" == "verbose" ]]; then
     do_verbose
+    exit $?
+fi
+
+if [[ "$MODE" == "activate" ]]; then
+    do_activate_timer
+    exit $?
+fi
+
+if [[ "$MODE" == "disable_timer" ]]; then
+    do_disable_timer
     exit $?
 fi
 
