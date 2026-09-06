@@ -817,7 +817,13 @@ render() {
     content_line " Known exit servers:" "$BOLD"
     content_line "$(printf '%-2s%-16s %-18s %3s  %-8s' '' 'SERVER' 'LOCATION' 'CNT' 'LAST')"
 
-    local any=0
+    local any=0 table_limit=20
+    local all_server_rows total_server_count=0
+    all_server_rows=$(server_table_rows)
+    if [[ -n "$all_server_rows" ]]; then
+        total_server_count=$(printf '%s\n' "$all_server_rows" | wc -l)
+    fi
+
     while IFS='|' read -r server ts loc count; do
         [[ -z "$server" ]] && continue
         any=1
@@ -830,7 +836,14 @@ render() {
             color="$GREEN"
         fi
         content_line "$(printf "%s%-16.16s %-18.18s %3s  %-8.8s" "$marker" "$server" "$loc" "$count" "$hh")" "$color"
-    done < <(server_table_rows)
+    done < <(printf '%s\n' "$all_server_rows" | head -n "$table_limit")
+
+    if [[ "$total_server_count" -gt "$table_limit" ]]; then
+        local remaining=$(( total_server_count - table_limit ))
+        local label="servers"
+        [[ "$remaining" -eq 1 ]] && label="server"
+        content_line "  + ${remaining} other ${label}" "$DIM"
+    fi
 
     if [[ "$any" -eq 0 ]]; then
         content_line "  (no history yet)" "$DIM"
