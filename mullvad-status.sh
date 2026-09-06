@@ -122,6 +122,17 @@ OPTIONS:
                         options afterward, or use mullvad-discovery, to
                         do that).
 
+    --select            Interactive tiered menu: pick "All Countries"
+                        (uses the full COUNTRIES list), a known country
+                        directly, or drill into "Single Exit" to pick
+                        one exact server from a specific country.
+                        Updates SERVER_COUNTRIES or SERVER_HOSTNAMES in
+                        the env file accordingly (clearing whichever
+                        one doesn't apply) and recreates the tunnel.
+                        Arrow keys to navigate, Enter to confirm,
+                        ".. Back" or q to go back/cancel. Requires a
+                        terminal -- not for cron/timers.
+
     --heal              Check CONTAINER's Docker health status; if
                         unhealthy, restart CONTAINER, then APP_CONTAINER
                         too if one is set, and exit. Does nothing if
@@ -158,6 +169,7 @@ EXAMPLES:
     mullvad-status --monitor        # live dashboard, 60s interval
     mullvad-status --monitor --interval=30
     mullvad-status --rotate         # rotate to the next country
+    mullvad-status --select         # pick a specific known server
     mullvad-status --heal           # restart tunnel if unhealthy
     mullvad-status --service=install    # set up scheduled rotate+heal
     mullvad-status --service=remove     # tear it back down
@@ -171,6 +183,7 @@ for arg in "$@"; do
         --monitor) MODE="monitor" ;;
         --once) MODE="once" ;;
         --rotate) MODE="rotate" ;;
+        --select) MODE="select" ;;
         --heal) MODE="heal" ;;
         --service=*) MODE="service"; SERVICE_ACTION="${arg#--service=}" ;;
         --interval=*) CHECK_INTERVAL="${arg#--interval=}" ;;
@@ -202,6 +215,20 @@ ensure_db() {
     touch "$DB_FILE"
 }
 
+set_env_line() {
+    local file="$1" key="$2" value="$3"
+    if grep -q "^${key}=" "$file"; then
+        sed -i "s/^${key}=.*/${key}=${value}/" "$file"
+    else
+        echo "${key}=${value}" >> "$file"
+    fi
+}
+
+remove_env_line() {
+    local file="$1" key="$2"
+    sed -i "/^${key}=/d" "$file"
+}
+
 do_rotate() {
     local last next country env_path
 
@@ -223,11 +250,11 @@ do_rotate() {
         return 1
     fi
 
-    if grep -q '^SERVER_COUNTRIES=' "$env_path"; then
-        sed -i "s/^SERVER_COUNTRIES=.*/SERVER_COUNTRIES=${country}/" "$env_path"
-    else
-        echo "SERVER_COUNTRIES=${country}" >> "$env_path"
-    fi
+    # A specific-server pin (from --select) and a country filter can
+    # conflict if the pinned server isn't in that country -- clear any
+    # pin so country rotation always has a clean slate to work with.
+    remove_env_line "$env_path" "SERVER_HOSTNAMES"
+    set_env_line "$env_path" "SERVER_COUNTRIES" "$country"
 
     # ROTATE_SERVICES is intentionally unquoted -- word-splits into one
     # or more compose service names.
@@ -237,6 +264,256 @@ do_rotate() {
     fi
 
     echo "$(date -Iseconds) rotation complete, now on $country"
+}
+
+# Generic single-level radio-button menu. Draws items_ref (a nameref to
+# an array of already-formatted label strings) with arrow-key
+# navigation, in place, no flicker.
+#
+# Args: $1 = nameref to items array, $2 = "1" to append a ".. Back"
+# entry (for submenus) or "0" (for the root level, where q/Ctrl+C is
+# the only way out).
+#
+# Sets on return:
+#   MENU_CANCELLED=1   if the user pressed q or Ctrl+C
+#   MENU_WENT_BACK=1   if they picked ".. Back"
+#   MENU_CHOICE_INDEX  the chosen index into items_ref (0-based),
+#                      valid only if neither of the above is 1
+radio_menu() {
+    local -n items_ref=$1
+    local allow_back="$2"
+
+    local -a display_items=("${items_ref[@]}")
+    [[ "$allow_back" == "1" ]] && display_items+=(".. Back")
+
+    local n="${#display_items[@]}"
+    local cursor=0 lines_printed=0
+    MENU_CANCELLED=0
+    MENU_WENT_BACK=0
+
+    draw_radio_menu() {
+        local j
+        if [[ "$lines_printed" -gt 0 ]]; then
+            printf '\033[%dA' "$lines_printed"
+        fi
+        lines_printed=0
+        for (( j=0; j<n; j++ )); do
+            if [[ "$j" == "$cursor" ]]; then
+                printf '\033[K  %s(*)%s %s\n' "$GREEN" "$RESET" "${display_items[$j]}"
+            else
+                printf '\033[K  ( ) %s\n' "${display_items[$j]}"
+            fi
+            lines_printed=$(( lines_printed + 1 ))
+        done
+    }
+
+    printf '\033[?25l'
+    draw_radio_menu
+
+    local key
+    while true; do
+        IFS= read -rsn1 key
+        if [[ "$key" == $'\x1b' ]]; then
+            read -rsn2 -t 0.1 key
+            case "$key" in
+                '[A') cursor=$(( (cursor - 1 + n) % n )) ;;
+                '[B') cursor=$(( (cursor + 1) % n )) ;;
+            esac
+            draw_radio_menu
+        elif [[ -z "$key" ]]; then
+            break
+        elif [[ "$key" == "q" ]]; then
+            printf '\033[?25h'
+            MENU_CANCELLED=1
+            return 1
+        fi
+    done
+    printf '\033[?25h'
+
+    if [[ "$allow_back" == "1" && "$cursor" -eq "$(( n - 1 ))" ]]; then
+        MENU_WENT_BACK=1
+        return 0
+    fi
+
+    MENU_CHOICE_INDEX="$cursor"
+    return 0
+}
+
+do_select() {
+    local env_path="$COMPOSE_DIR/$ENV_FILE_NAME"
+
+    if [[ ! -t 0 ]]; then
+        printf "%s[X] --select requires an interactive terminal%s\n" "$RED" "$RESET"
+        return 1
+    fi
+
+    if [[ ! -f "$env_path" ]]; then
+        printf "%s[X] env file not found: %s%s\n" "$RED" "$env_path" "$RESET"
+        return 1
+    fi
+
+    if [[ ! -s "$DB_FILE" ]]; then
+        printf "%s[X] No known exit servers yet in %s -- run mullvad-status at least once first%s\n" "$RED" "$DB_FILE" "$RESET"
+        return 1
+    fi
+
+    local -a known_countries=()
+    local c
+    while IFS= read -r c; do
+        [[ -z "$c" ]] && continue
+        known_countries+=("$(transliterate "$c")")
+    done < <(cut -d'|' -f5 "$DB_FILE" | sort -u)
+
+    if [[ "${#known_countries[@]}" -eq 0 ]]; then
+        printf "%s[X] No known exit servers found%s\n" "$RED" "$RESET"
+        return 1
+    fi
+
+    local result_mode="" result_value="" result_is_all_countries=0
+
+    while true; do
+        local -a root_items=("All Countries")
+        for c in "${known_countries[@]}"; do
+            root_items+=("$c")
+        done
+        local single_exit_index="${#root_items[@]}"
+        root_items+=("Single Exit >")
+
+        echo "Select a rotation mode:"
+        echo
+        radio_menu root_items 0
+
+        if [[ "$MENU_CANCELLED" -eq 1 ]]; then
+            echo
+            echo "Cancelled."
+            return 1
+        fi
+
+        if [[ "$MENU_CHOICE_INDEX" -eq 0 ]]; then
+            local joined
+            joined=$(IFS=,; echo "${COUNTRIES[*]}")
+            result_mode="countries"
+            result_value="$joined"
+            result_is_all_countries=1
+            break
+        elif [[ "$MENU_CHOICE_INDEX" -eq "$single_exit_index" ]]; then
+            # --- Single Exit: country submenu, then server submenu ---
+            local went_back_to_root=0
+            while true; do
+                echo
+                echo "Single Exit -- choose a country:"
+                echo
+                radio_menu known_countries 1
+
+                if [[ "$MENU_CANCELLED" -eq 1 ]]; then
+                    echo
+                    echo "Cancelled."
+                    return 1
+                fi
+                if [[ "$MENU_WENT_BACK" -eq 1 ]]; then
+                    went_back_to_root=1
+                    break
+                fi
+
+                local chosen_country="${known_countries[$MENU_CHOICE_INDEX]}"
+
+                local -a srv_servers=() srv_display=()
+                local server ts city count hh
+                while IFS='|' read -r server ts city count; do
+                    [[ -z "$server" ]] && continue
+                    hh=$(date -d "$ts" +%H:%M:%S 2>/dev/null || echo "$ts")
+                    srv_display+=("$(printf "%-18s %-16s %3sx  %s" "$server" "$(transliterate "$city")" "$count" "$hh")")
+                    srv_servers+=("$server")
+                done < <(awk -F'|' -v want="$chosen_country" '
+                    { server=$2; ts=$1; city=$4; country=$5
+                      if (country != want) next
+                      count[server]++; last[server]=ts; lastcity[server]=city }
+                    END { for (s in count) printf "%s|%s|%s|%d\n", s, last[s], lastcity[s], count[s] }
+                ' "$DB_FILE" | sort -t'|' -k2,2r)
+
+                echo
+                echo "Servers in $chosen_country:"
+                echo
+                radio_menu srv_display 1
+
+                if [[ "$MENU_CANCELLED" -eq 1 ]]; then
+                    echo
+                    echo "Cancelled."
+                    return 1
+                fi
+                if [[ "$MENU_WENT_BACK" -eq 1 ]]; then
+                    continue
+                fi
+
+                result_mode="hostname"
+                result_value="${srv_servers[$MENU_CHOICE_INDEX]}"
+                break 2
+            done
+            [[ "$went_back_to_root" -eq 1 ]] && continue
+        else
+            result_mode="countries"
+            result_value="${known_countries[$(( MENU_CHOICE_INDEX - 1 ))]}"
+            break
+        fi
+    done
+
+    echo
+    if [[ "$result_mode" == "hostname" ]]; then
+        echo "$(date -Iseconds) pinning to exit server $result_value"
+        set_env_line "$env_path" "SERVER_HOSTNAMES" "$result_value"
+        remove_env_line "$env_path" "SERVER_COUNTRIES"
+    else
+        echo "$(date -Iseconds) setting SERVER_COUNTRIES=$result_value"
+        remove_env_line "$env_path" "SERVER_HOSTNAMES"
+        set_env_line "$env_path" "SERVER_COUNTRIES" "$result_value"
+    fi
+
+    if ! (cd "$COMPOSE_DIR" && docker compose up -d --force-recreate $ROTATE_SERVICES); then
+        printf "%s[X] docker compose failed while switching servers%s\n" "$RED" "$RESET"
+        return 1
+    fi
+
+    echo "$(date -Iseconds) done"
+
+    # State-driven check, but the install/enable branches are skipped
+    # for a specific-exit pin (result_mode == "hostname") -- turning
+    # rotation on would immediately threaten to rotate away from the
+    # exact server just pinned, defeating the point of pinning it.
+    # The disable-if-active branch still applies to every selection
+    # type, since an already-active timer threatens any of them.
+    local timer_status
+    timer_status=$(rotate_timer_status)
+    case "$timer_status" in
+        not_installed)
+            if [[ "$result_mode" != "hostname" ]]; then
+                echo
+                if confirm "mullvad-rotate.timer isn't installed. Install and enable scheduled rotation (this also installs mullvad-healthwatch.timer)?"; then
+                    do_service_install
+                fi
+            fi
+            ;;
+        inactive)
+            if [[ "$result_mode" != "hostname" ]]; then
+                echo
+                if confirm "mullvad-rotate.timer is installed but not active. Enable it now?"; then
+                    sudo systemctl enable --now mullvad-rotate.timer
+                    printf "%s[OK] mullvad-rotate.timer enabled%s\n" "$GREEN" "$RESET"
+                fi
+            fi
+            ;;
+        active)
+            echo
+            if confirm "mullvad-rotate.timer is active and may override this choice next time it fires. Disable it so it holds?"; then
+                sudo systemctl disable --now mullvad-rotate.timer
+                printf "%s[OK] mullvad-rotate.timer disabled%s\n" "$GREEN" "$RESET"
+            else
+                printf "%sNote: this may be overridden the next time mullvad-rotate.timer fires.%s\n" "$YELLOW" "$RESET"
+            fi
+            ;;
+        unavailable)
+            : # systemctl not present at all -- nothing to offer
+            ;;
+    esac
 }
 
 do_heal() {
@@ -274,6 +551,27 @@ require_systemctl() {
     if ! command -v systemctl >/dev/null 2>&1; then
         printf "%s[X] systemctl not found -- --service requires a systemd-based host%s\n" "$RED" "$RESET"
         exit 1
+    fi
+}
+
+# Reports "not_installed", "active", or "inactive" for
+# mullvad-rotate.timer specifically -- used by --select to warn about
+# (or offer to fix) interactions between a manual pick and the
+# scheduled rotation timer. Prints nothing; caller checks the echoed
+# value. Never exits the script (unlike require_systemctl) -- this is
+# an optional, best-effort check that should degrade silently if
+# systemctl isn't available at all.
+rotate_timer_status() {
+    if ! command -v systemctl >/dev/null 2>&1; then
+        echo "unavailable"
+        return
+    fi
+    if [[ ! -f "$UNIT_DIR/mullvad-rotate.timer" ]]; then
+        echo "not_installed"
+    elif systemctl is-active --quiet mullvad-rotate.timer 2>/dev/null; then
+        echo "active"
+    else
+        echo "inactive"
     fi
 }
 
@@ -382,6 +680,13 @@ transliterate() {
     fi
 }
 
+# Simple y/N prompt. Returns 0 (true) only on an explicit y/Y answer.
+confirm() {
+    local prompt="$1" reply
+    read -rp "$prompt [y/N]: " reply
+    [[ "$reply" =~ ^[Yy]$ ]]
+}
+
 border() {
     local char="$1"
     printf "%s+" "$CYAN"
@@ -463,6 +768,25 @@ server_table_rows() {
     ' "$DB_FILE" | sort -t'|' -k2,2r
 }
 
+# Same aggregation as server_table_rows(), but keeps city/country
+# separate and sorts by country first (then most-recent within each
+# country), for --select's grouped menu.
+server_rows_by_country() {
+    [[ -f "$DB_FILE" ]] || return
+    awk -F'|' '
+        {
+            server=$2; ts=$1; city=$4; country=$5
+            count[server]++
+            last[server]=ts
+            lastcity[server]=city
+            lastcountry[server]=country
+        }
+        END {
+            for (s in count) printf "%s|%s|%s|%s|%d\n", lastcountry[s], s, last[s], lastcity[s], count[s]
+        }
+    ' "$DB_FILE" | sort -t'|' -k1,1 -k3,3r
+}
+
 render() {
     printf '%s' "$CLEAR_SCREEN"
     echo
@@ -538,6 +862,11 @@ render() {
 
 if [[ "$MODE" == "rotate" ]]; then
     do_rotate
+    exit $?
+fi
+
+if [[ "$MODE" == "select" ]]; then
+    do_select
     exit $?
 fi
 
