@@ -1,0 +1,27 @@
+Searxng-Mullvad
+Copyright (C) 2026 John Hutchison (techfixpros)
+
+This program is free software licensed under the GNU Affero General Public
+License, version 3 only (SPDX: AGPL-3.0-only). The full text is in the LICENSE file.
+The copyright holder keeps all rights not granted by that license, including
+the right to offer this software under other terms.
+
+Additional terms under section 7 of the GNU AGPL version 3
+----------------------------------------------------------
+These terms apply in addition to the license, as permitted by section 7:
+
+(b) Attribution. Anyone who copies, modifies or distributes this software, or
+    makes a modified version available to users over a network, must preserve
+    this NOTICE file, the LICENSE file, and the copyright and SPDX notices in
+    the source files, and must keep a reference to the original author and
+    project in the README or equivalent documentation of the work.
+
+(c) Origin. Modified versions must be marked as different from the original,
+    and must not be presented as being the original or as being made by, or
+    endorsed by, the copyright holder.
+
+(e) Names. No rights are granted to use the project name, the author's name or
+    handle ("techfixpros"), or any logos or other trademarks of the copyright
+    holder, except for reasonable factual attribution as required above.
+
+Third-party components keep their own licenses (see package manifests).

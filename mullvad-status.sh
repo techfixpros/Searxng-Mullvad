@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 John Hutchison (techfixpros)
 set -uo pipefail
 
 DATA_DIR="${MULLVAD_DATA_DIR:-$HOME/.local/share/mullvad-status}"

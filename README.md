@@ -121,4 +121,9 @@ sessions, not poll frequency. The dashboard shows the 20 most recent
 
 ## License
 
-MIT -- see [LICENSE](./LICENSE).
+Copyright (C) 2026 John Hutchison (techfixpros). Licensed under the
+[GNU Affero General Public License v3.0 only](./LICENSE) (AGPL-3.0-only), with the
+attribution, origin and name terms in [NOTICE](./NOTICE) (AGPL section 7).
+If you run a modified version for others over a network, AGPL section 13
+requires you to offer them its source. The copyright holder retains all other
+rights, including the right to license the software under other terms.
